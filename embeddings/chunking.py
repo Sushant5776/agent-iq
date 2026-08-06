@@ -2,11 +2,11 @@ from pypdf import PdfReader
 from splitter import splitter
 
 
-def chunk_text_from_file(file_path: str | None = None) -> list[str]:
-    if not file_path:
+def chunk_text_from_file(file_path: str | None = None):
+    if not file_path or not file_path.strip():
         raise AttributeError("ingest:read_file file_path not provided.")
 
-    file_path = file_path.strip()
+    file_name = file_path.split("/")[-1]
 
     if not file_path.endswith(".pdf"):
         with open(file_path, "r") as file:
@@ -23,4 +23,7 @@ def chunk_text_from_file(file_path: str | None = None) -> list[str]:
 
     chunks = splitter.split_text(content)
 
-    return chunks
+    return {
+        "file_name": file_name,
+        "chunks": chunks,
+    }
