@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 from google import genai
 
@@ -13,7 +14,7 @@ class GenAI:
     def get_client():
         if not gemini_api_key:
             raise ValueError("GenAI:get_client - GEMINI_API_KEY not set!")
-        
+
         if not GenAI.client:
             GenAI.client = genai.Client(api_key=gemini_api_key, vertexai=False)
 

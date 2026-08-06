@@ -1,5 +1,5 @@
-import firebase_admin
-from firebase_admin import credentials
+from firebase_admin import _apps, credentials, get_app, initialize_app
+
 
 class Firebase:
     __app = None
@@ -7,10 +7,10 @@ class Firebase:
     @staticmethod
     def get_app():
         if not Firebase.__app:
-            if not firebase_admin._apps:
+            if not _apps:
                 cred = credentials.Certificate("./agent_iq_firebase_admin_private_key.json")
-                Firebase.__app = firebase_admin.initialize_app(credential=cred)
+                Firebase.__app = initialize_app(credential=cred)
             else:
-                Firebase.__app = firebase_admin.get_app()
+                Firebase.__app = get_app()
 
         return Firebase.__app
