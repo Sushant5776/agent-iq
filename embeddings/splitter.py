@@ -9,6 +9,7 @@ load_dotenv()
 chunk_size = int(os.environ.get("EMBEDDING_CHUNK_SIZE", 700))
 overlap_size = int(os.environ.get("EMBEDDING_OVERLAP_SIZE", 140))
 
+
 def estimate_gemini_tokens(text: str) -> int:
     text = text.strip()
 
@@ -16,6 +17,7 @@ def estimate_gemini_tokens(text: str) -> int:
         return 0
     else:
         return math.ceil(len(text) / 3)
+
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=chunk_size,
