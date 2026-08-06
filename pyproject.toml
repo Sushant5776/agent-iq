@@ -1,0 +1,9 @@
+[project]
+name = "agent-iq"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "firebase-admin>=7.5.0",
+]
