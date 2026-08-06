@@ -8,7 +8,9 @@ class Firebase:
     def get_app():
         if not Firebase.__app:
             if not _apps:
-                cred = credentials.Certificate("./agent_iq_firebase_admin_private_key.json")
+                cred = credentials.Certificate(
+                    "./agent_iq_firebase_admin_private_key.json"
+                )
                 Firebase.__app = initialize_app(credential=cred)
             else:
                 Firebase.__app = get_app()
