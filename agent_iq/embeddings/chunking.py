@@ -1,5 +1,5 @@
 from pypdf import PdfReader
-from splitter import splitter
+from agent_iq.embeddings.splitter import splitter
 
 
 def chunk_text_from_file(file_path: str | None = None):

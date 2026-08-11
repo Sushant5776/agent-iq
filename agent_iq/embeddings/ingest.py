@@ -1,10 +1,10 @@
-from chunking import chunk_text_from_file
+from agent_iq.embeddings.chunking import chunk_text_from_file
+from agent_iq.embeddings.embed import create_jsonl
 
 
 def main(file_path: str):
     chunk_obj = chunk_text_from_file(file_path=file_path)
-    print(chunk_obj["file_name"])
-    print(chunk_obj["chunks"])
+    create_jsonl(chunk_obj=chunk_obj)
 
 
 if __name__ == "__main__":
