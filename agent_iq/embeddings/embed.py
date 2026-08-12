@@ -3,26 +3,48 @@ import os
 import time
 from uuid import uuid4
 
-from google.genai.types import UploadFileConfig, CreateEmbeddingsBatchJobConfig
+from firebase_admin import firestore
+from google.cloud.firestore_v1.vector import Vector
+from google.genai.types import CreateEmbeddingsBatchJobConfig, UploadFileConfig
 
-# sys.path.append("/Users/sushant/Projects/agent_iq")
+from agent_iq.connections.firebase import Firebase
 from agent_iq.connections.genai import GenAI
 
 genai_client = GenAI.get_client()
+firebase_app = Firebase.get_app()
+db = firestore.client(app=firebase_app)
 
 output_file_name = os.environ.get("JSON_REQUESTS_FILE_NAME", "chunks.jsonl")
 embedding_model = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-2")
 
 
-def create_jsonl(chunk_obj) -> None:
+def process_chunks(chunk_obj):
     original_file_name = chunk_obj["file_name"]
     chunks = chunk_obj["chunks"]
+    collection_name = (
+        original_file_name.strip().replace(" ", "_").replace(".", "_").replace("-", "_")
+    )
+
+    bulk_writer = db.bulk_writer()
 
     with open(output_file_name, "w") as file:
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             unique_id = str(uuid4())
 
-            request_obj = {
+            # write to firebase
+            doc_ref = db.collection(collection_name).document(unique_id)
+            bulk_writer.set(
+                doc_ref,
+                {
+                    "text": chunk,
+                    "length": len(chunk),
+                    "file_name": original_file_name,
+                    "timestamp": firestore.firestore.SERVER_TIMESTAMP,
+                    "index": index,
+                },
+            )
+
+            embedding_request_obj = {
                 "key": unique_id,
                 "request": {
                     "model": f"models/{embedding_model}",
@@ -35,14 +57,15 @@ def create_jsonl(chunk_obj) -> None:
                 },
             }
 
-            jsonl_row = json.dumps(request_obj) + "\n"
-
+            jsonl_row = json.dumps(embedding_request_obj) + "\n"
             file.write(jsonl_row)
 
-    return original_file_name
+        bulk_writer.close()
+
+    return collection_name
 
 
-def upload_chunks_and_create_embeddings():
+def create_embeddings():
     uploaded_file = genai_client.files.upload(
         file=output_file_name,
         config=UploadFileConfig(
@@ -53,10 +76,14 @@ def upload_chunks_and_create_embeddings():
     batch_job = genai_client.batches.create_embeddings(
         model=embedding_model,
         src={"file_name": uploaded_file.name},
-        config=CreateEmbeddingsBatchJobConfig(display_name="generate_embeddings_batch_job")
+        config=CreateEmbeddingsBatchJobConfig(
+            display_name="generate_embeddings_batch_job"
+        ),
     )
 
     while True:
+        batch_job = genai_client.batches.get(name=batch_job.name)
+
         if batch_job.state and batch_job.state.name in (
             "JOB_STATE_SUCCEEDED",
             "JOB_STATE_FAILED",
@@ -69,4 +96,45 @@ def upload_chunks_and_create_embeddings():
 
     print(f"Job finished with status: {batch_job.state.name}")
 
-    return batch_job
+    if batch_job.state.name != "JOB_STATE_SUCCEEDED":
+        raise Exception(f"{batch_job.state.name}")
+    else:
+        return batch_job.name
+
+
+def process_embeddings(batch_job_name, collection_name):
+    batch_job = genai_client.batches.get(name=batch_job_name)
+    embedding_result_file = batch_job.dest.file_name
+    print(
+        f"Fetching results for job: {batch_job_name} from embedding result file: {embedding_result_file}"
+    )
+
+    content = genai_client.files.download(file=embedding_result_file)
+
+    with open("embeddings_result.jsonl", "wb") as f:
+        f.write(content)
+
+    bulk_writer = db.bulk_writer()
+
+    with open("embeddings_result.jsonl", "r") as f:
+        for line in f:
+            if not line.strip():
+                continue
+
+            embedding_obj = json.loads(line)
+
+            firebase_file_id = embedding_obj["key"]
+            embedding_array = embedding_obj["response"]["embedding"]["values"]
+            token_count = embedding_obj["response"]["usageMetadata"]["promptTokenCount"]
+
+            doc_ref = db.collection(collection_name).document(firebase_file_id)
+
+            bulk_writer.update(
+                doc_ref,
+                {
+                    "embedding": Vector(embedding_array),
+                    "token_count": token_count,
+                },
+            )
+
+        bulk_writer.close()

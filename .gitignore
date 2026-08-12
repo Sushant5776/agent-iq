@@ -8,5 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
-*.json
+*.json*
 *.env*
+*temp*
