@@ -108,6 +108,10 @@ This repo is structured so the next steps are natural:
 - call Gemini for answer generation using the retrieved context
 - add conversation state and follow-up question handling
 
+## Architecture diagram
+
+![User and data flow](assets/user_data_flow.svg)
+
 ## Project structure
 
 - `main.py` — starter entry point
