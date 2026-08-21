@@ -4,8 +4,9 @@ import time
 from uuid import uuid4
 
 from firebase_admin import firestore
+from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
-from google.genai.types import CreateEmbeddingsBatchJobConfig, UploadFileConfig
+from google.genai.types import CreateEmbeddingsBatchJobConfig, UploadFileConfig, EmbedContentConfig
 
 from agent_iq.connections.firebase import Firebase
 from agent_iq.connections.genai import GenAI
@@ -69,7 +70,7 @@ def create_embeddings():
     uploaded_file = genai_client.files.upload(
         file=output_file_name,
         config=UploadFileConfig(
-            display_name="generate-embeddings-batch-file", mime_type="jsonl"
+            display_name="generate-embeddings-batch-file", mime_type="application/jsonl"
         ),
     )
 
@@ -138,3 +139,36 @@ def process_embeddings(batch_job_name, collection_name):
             )
 
         bulk_writer.close()
+
+def get_query_embedding(query: str):
+    embedding_config = EmbedContentConfig(
+        task_type="RETRIEVAL_QUERY",
+        output_dimensionality=768
+    )
+
+    response = genai_client.models.embed_content(
+        model=embedding_model, contents=query, config=embedding_config
+    )
+
+    if not response.embeddings or response.embeddings[0].values is None:
+        raise ValueError("The embedding response did not contain a vector")
+
+    return response.embeddings[0].values
+
+
+def retrieve_top_embeddings(query: str, collection_name: str, limit: int = 10):
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+
+    query_embedding = get_query_embedding(query=query)
+
+    return list(
+        db.collection(collection_name)
+        .find_nearest(
+            vector_field="embedding",
+            query_vector=Vector(query_embedding),
+            distance_measure=DistanceMeasure.COSINE,
+            limit=limit,
+        )
+        .stream()
+    )
