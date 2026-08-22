@@ -1,15 +1,14 @@
-import os
+import sys
 
-from dotenv import load_dotenv
 from google.genai.types import GenerateContentConfig, ModelContent, Part, UserContent
 
+from agent_iq.config import Settings
 from agent_iq.connections.genai import GenAI
 from agent_iq.embeddings.embed import retrieve_top_embeddings
 
-load_dotenv()
-
+settings = Settings.from_environment()
 genai_client = GenAI.get_client()
-collection_name = os.environ.get("FIRESTORE_COLLECTION_NAME")
+
 
 def update_history(history, text, role):
     match role:
@@ -25,14 +24,22 @@ def update_history(history, text, role):
 
     history.append(message)
 
+
 def main():
-    if not collection_name:
-        raise ValueError("FIRESTORE_COLLECTION_NAME is not configured")
+    collection_name = settings.firestore_collection_name
 
     config = GenerateContentConfig(
         system_instruction="You are a helpful assistant named AgentIQ. You will assist users in friendly manner to answer their queries based data retrieved as part of RAG system.",
     )
-    history = [ModelContent(parts=[Part(text="Hello, I'm AgentIQ! How can I help you?", )])]
+    history = [
+        ModelContent(
+            parts=[
+                Part(
+                    text="Hello, I'm AgentIQ! How can I help you?",
+                )
+            ]
+        )
+    ]
 
     first_turn = True
 
@@ -42,13 +49,13 @@ def main():
         if first_turn:
             print("When you are done type exit to close the session!")
             first_turn = False
-        
+
         text = input("====>>>> ")
 
         if text == "exit":
             print("Thanks for the time!")
-            exit()
-        
+            sys.exit()
+
         update_history(history=history, text=text, role="user")
 
         matching_documents = retrieve_top_embeddings(
@@ -69,7 +76,11 @@ def main():
             role="user",
         )
 
-        response = genai_client.models.generate_content(model="gemini-3.5-flash", contents=history, config=config)
+        response = genai_client.models.generate_content(
+            model=settings.generation_model,
+            contents=history,
+            config=config,
+        )
         update_history(history=history, text=response.text, role="model")
 
 

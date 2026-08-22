@@ -70,13 +70,24 @@ Create a `.env` file at the repository root with the following variables:
 
 ```env
 GEMINI_API_KEY=your_genai_api_key
+FIREBASE_CREDENTIALS_PATH=/secure/path/service-account.json
+FIRESTORE_COLLECTION_NAME=your_collection_name
+LANGUAGE_MODEL=gemini-3.5-flash
 EMBEDDING_MODEL=gemini-embedding-2
 EMBEDDING_CHUNK_SIZE=700
 EMBEDDING_OVERLAP_SIZE=140
+OUTPUT_DIMENSIONALITY=768
 JSON_REQUESTS_FILE_NAME=chunks.jsonl
 ```
 
-Place your Firebase service account key at the repository root as:
+For local development, `FIREBASE_CREDENTIALS_PATH` may point to a service-account
+JSON file. In production, prefer Application Default Credentials or a
+secret-manager-mounted file. Do not commit either the JSON key or `.env`.
+
+Configuration is validated at startup. Chunk overlap must be smaller than chunk
+size, and numeric settings must be positive.
+
+The legacy local service-account filename is:
 
 ```text
 agent_iq_firebase_admin_private_key.json

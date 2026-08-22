@@ -1,22 +1,27 @@
 import json
-import os
 import time
 from uuid import uuid4
 
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
-from google.genai.types import CreateEmbeddingsBatchJobConfig, UploadFileConfig, EmbedContentConfig
+from google.genai.types import (
+    CreateEmbeddingsBatchJobConfig,
+    EmbedContentConfig,
+    UploadFileConfig,
+)
 
+from agent_iq.config import Settings
 from agent_iq.connections.firebase import Firebase
 from agent_iq.connections.genai import GenAI
 
+settings = Settings.from_environment()
 genai_client = GenAI.get_client()
 firebase_app = Firebase.get_app()
 db = firestore.client(app=firebase_app)
 
-output_file_name = os.environ.get("JSON_REQUESTS_FILE_NAME", "chunks.jsonl")
-embedding_model = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-2")
+output_file_name = settings.json_requests_file_name
+embedding_model = settings.embedding_model
 
 
 def process_chunks(chunk_obj):
@@ -53,7 +58,7 @@ def process_chunks(chunk_obj):
                     "embed_content_config": {
                         "task_type": "RETRIEVAL_DOCUMENT",
                         "title": original_file_name,
-                        "output_dimensionality": 768,  # firestore only supports upto 2048
+                        "output_dimensionality": settings.output_dimensionality,
                     },
                 },
             }
@@ -98,7 +103,7 @@ def create_embeddings():
     print(f"Job finished with status: {batch_job.state.name}")
 
     if batch_job.state.name != "JOB_STATE_SUCCEEDED":
-        raise Exception(f"{batch_job.state.name}")
+        raise RuntimeError(f"Embedding job failed: {batch_job.state.name}")
     else:
         return batch_job.name
 
@@ -140,10 +145,11 @@ def process_embeddings(batch_job_name, collection_name):
 
         bulk_writer.close()
 
+
 def get_query_embedding(query: str):
     embedding_config = EmbedContentConfig(
         task_type="RETRIEVAL_QUERY",
-        output_dimensionality=768
+        output_dimensionality=settings.output_dimensionality,
     )
 
     response = genai_client.models.embed_content(

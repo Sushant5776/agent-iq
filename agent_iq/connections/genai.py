@@ -1,11 +1,6 @@
-import os
-
-from dotenv import load_dotenv
 from google import genai
 
-load_dotenv()
-
-gemini_api_key = os.environ.get("GEMINI_API_KEY", None)
+from agent_iq.config import Settings
 
 
 class GenAI:
@@ -13,10 +8,11 @@ class GenAI:
 
     @staticmethod
     def get_client():
-        if not gemini_api_key:
-            raise ValueError("GenAI:get_client - GEMINI_API_KEY not set!")
-
         if not GenAI.__client:
-            GenAI.__client = genai.Client(api_key=gemini_api_key, vertexai=False)
+            settings = Settings.from_environment()
+            GenAI.__client = genai.Client(
+                api_key=settings.gemini_api_key,
+                vertexai=False,
+            )
 
         return GenAI.__client

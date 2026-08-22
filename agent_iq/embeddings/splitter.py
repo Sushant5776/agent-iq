@@ -1,13 +1,10 @@
 import math
-import os
 
-from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-load_dotenv()
+from agent_iq.config import Settings
 
-chunk_size = int(os.environ.get("EMBEDDING_CHUNK_SIZE", 700))
-overlap_size = int(os.environ.get("EMBEDDING_OVERLAP_SIZE", 140))
+settings = Settings.from_environment()
 
 
 def estimate_gemini_tokens(text: str) -> int:
@@ -20,8 +17,8 @@ def estimate_gemini_tokens(text: str) -> int:
 
 
 splitter = RecursiveCharacterTextSplitter(
-    chunk_size=chunk_size,
-    chunk_overlap=overlap_size,
+    chunk_size=settings.embedding_chunk_size,
+    chunk_overlap=settings.embedding_overlap_size,
     separators=[
         "\n\n",
         "\n",
