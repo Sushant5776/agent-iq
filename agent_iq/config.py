@@ -36,6 +36,7 @@ class Settings:
     embedding_overlap_size: int
     json_requests_file_name: Path
     output_dimensionality: int
+    top_k_matching_results: int
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -62,5 +63,6 @@ class Settings:
             json_requests_file_name=Path(
                 os.environ.get("JSON_REQUESTS_FILE_NAME", "chunks.jsonl")
             ),
-            output_dimensionality=_positive_int("OUTPUT_DIMENSIONALITY", 768),
+            output_dimensionality=_positive_int("OUTPUT_DIMENSIONALITY", 512),
+            top_k_matching_results=_positive_int("TOP_K_MATCHING_RESULTS", 10),
         )

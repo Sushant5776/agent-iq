@@ -61,7 +61,7 @@ def main():
         matching_documents = retrieve_top_embeddings(
             query=text,
             collection_name=collection_name,
-            limit=10,
+            limit=settings.top_k_matching_results,
         )
         retrieved_context = "\n\n".join(
             (document.to_dict() or {}).get("text", "")
