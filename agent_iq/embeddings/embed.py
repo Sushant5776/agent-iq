@@ -178,3 +178,7 @@ def retrieve_top_embeddings(query: str, collection_name: str, limit: int = 10):
         )
         .stream()
     )
+
+
+def list_collection_names():
+    return sorted(collection.id for collection in db.collections())

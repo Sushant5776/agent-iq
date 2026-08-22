@@ -12,3 +12,4 @@ wheels/
 *.env*
 !.env.example
 *temp*
+*.DS_Store*

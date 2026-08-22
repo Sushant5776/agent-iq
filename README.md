@@ -4,11 +4,15 @@ AgentIQ is a Python retrieval-augmented generation (RAG) foundation for
 searching text and PDF documents with Google Gemini embeddings and Firebase
 Firestore vector search.
 
-The repository currently provides two operator-facing workflows:
+The repository currently provides three operator-facing workflows:
 
 - ingest a document, create chunks, generate embeddings, and store them in
   Firestore;
-- query the indexed collection through a terminal chat loop.
+- query the indexed collection through a terminal chat loop;
+- use a Next.js web workspace to select an indexed collection, ask questions,
+  view Markdown-formatted answers with sources, and upload documents.
+
+![AgentIQ web workspace](assets/AgentIQ_Chatbot.png)
 
 > **Project status:** early-stage foundation. It is suitable for local
 > development and controlled evaluation. It is not yet a hardened public
@@ -76,6 +80,7 @@ context.
 - A Firestore vector index for the configured embedding field
 - A Google Gemini API key and access to the configured models
 - [`uv`](https://docs.astral.sh/uv/) or another Python package installer
+- Node.js 20.9 or newer and npm
 
 ## Installation
 
@@ -95,6 +100,13 @@ Install development dependencies with:
 
 ```bash
 uv sync --group dev
+```
+
+The Next.js frontend lives in `web/`. Install its dependencies with:
+
+```bash
+cd web
+npm install
 ```
 
 ## Configuration
@@ -118,7 +130,7 @@ these values through the deployment environment or a secret manager.
 | `EMBEDDING_MODEL` | No | `gemini-embedding-2` | Gemini embedding model. |
 | `EMBEDDING_CHUNK_SIZE` | No | `700` | Target chunk length in estimated tokens. |
 | `EMBEDDING_OVERLAP_SIZE` | No | `140` | Overlap between adjacent chunks. Must be smaller than chunk size. |
-| `OUTPUT_DIMENSIONALITY` | No | `768` | Embedding vector dimension. Must match the Firestore vector index. |
+| `OUTPUT_DIMENSIONALITY` | No | `512` | Embedding vector dimension. Must match the Firestore vector index. |
 | `JSON_REQUESTS_FILE_NAME` | No | `chunks.jsonl` | Local JSONL file used for the embedding batch request. |
 
 Configuration is validated at startup. Numeric values must be positive, and
@@ -150,7 +162,7 @@ When prompted, provide a path to a `.txt` or `.pdf` file. The pipeline will:
 5. create and poll a Gemini batch embedding job;
 6. attach the returned vectors and token counts to the Firestore documents.
 
-### Start the chat workflow
+### Start the terminal chat workflow
 
 Set `FIRESTORE_COLLECTION_NAME` to the collection you want to query, then run:
 
@@ -173,7 +185,8 @@ The API provides:
 | Method | Endpoint | Purpose | Authentication |
 | --- | --- | --- | --- |
 | `GET` | `/health` | Liveness check. | None |
-| `POST` | `/query` | Retrieve context and generate an answer. | Bearer token |
+| `GET` | `/collections` | List Firestore collections available for chat. | Bearer token |
+| `POST` | `/query` | Retrieve context and generate an answer for a selected collection. | Bearer token |
 | `POST` | `/ingest` | Ingest one `.txt` or `.pdf` document. | Bearer token |
 
 Example query:
@@ -182,7 +195,7 @@ Example query:
 curl -X POST http://localhost:8000/query \
   -H "Authorization: Bearer $API_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query":"What is this document about?"}'
+  -d '{"query":"What is this document about?","collection_name":"Inference_Engineering_pdf"}'
 ```
 
 Example ingestion:
@@ -196,6 +209,28 @@ curl -X POST http://localhost:8000/ingest \
 The current `/ingest` endpoint waits for the complete embedding batch job.
 For production workloads, move ingestion to a durable background job queue and
 return a job ID instead of holding the HTTP request open.
+
+### Run the web frontend
+
+Create `web/.env.local` from the example and set the FastAPI URL and shared
+operator token:
+
+```bash
+cp web/.env.local.example web/.env.local
+```
+
+Start the frontend in a second terminal:
+
+```bash
+cd web
+npm run dev
+```
+
+Open <http://localhost:3000>. The browser communicates with Next.js through
+`/api/collections`, `/api/query`, and `/api/ingest`; the FastAPI bearer token
+remains server-side. Select a collection before sending a question. Assistant
+answers support Markdown formatting, including headings, lists, tables, links,
+and code blocks.
 
 ## Data and security
 
@@ -226,6 +261,14 @@ uv run ruff check agent_iq main.py
 uv run python -m compileall -q agent_iq main.py
 ```
 
+Run the frontend checks from `web/`:
+
+```bash
+cd web
+npm run lint
+npm run build -- --webpack
+```
+
 Before submitting changes, also verify that:
 
 - no secrets or generated JSONL files are tracked;
@@ -236,8 +279,8 @@ Before submitting changes, also verify that:
 
 ## Known limitations
 
-- The chat interface is terminal-only.
-- API authentication currently uses one shared bearer token; there is no user
+- The terminal chat and Next.js web workspace are the available interfaces.
+- The web workspace currently uses one shared bearer token; there is no user
   identity or multi-tenant authorization.
 - API ingestion is synchronous and has no durable job queue.
 - Ingestion writes metadata before embedding completion; failed jobs may leave
@@ -262,7 +305,11 @@ agent_iq/
     ├── embed.py                 # Embeddings and vector retrieval
     ├── ingest.py                # Ingestion orchestration
     └── splitter.py              # Token-aware chunking
+  api.py                          # FastAPI service endpoints
 main.py                          # Terminal RAG chat workflow
+  web/
+  ├── src/app/page.tsx             # Next.js operator workspace
+  └── src/app/api/                 # Server-side FastAPI proxy routes
 pyproject.toml                   # Package metadata and dependencies
 uv.lock                          # Locked dependency resolution
 ```
