@@ -1,143 +1,242 @@
-# agent-iq
+# AgentIQ
 
-`agent-iq` is a document chatbot foundation. It ingests text and PDF documents, converts them into searchable chunks, stores the chunks in Firebase Firestore, and uses Google Gemini embeddings to prepare the content for retrieval-driven conversations.
+AgentIQ is a Python retrieval-augmented generation (RAG) foundation for
+searching text and PDF documents with Google Gemini embeddings and Firebase
+Firestore vector search.
 
-## What it does today
+The repository currently provides two operator-facing workflows:
 
-- reads plain text and PDF files
-- splits documents into token-aware chunks
-- persists chunk metadata into Firestore for later retrieval
-- generates Gemini batch embeddings from chunk content
-- updates Firestore documents with vector embeddings and token metadata
+- ingest a document, create chunks, generate embeddings, and store them in
+  Firestore;
+- query the indexed collection through a terminal chat loop.
 
-## Why this architecture
+> **Project status:** early-stage foundation. It is suitable for local
+> development and controlled evaluation. It is not yet a hardened public
+> service: authentication, authorization, job orchestration, observability,
+> and automated tests still need to be added before internet-facing use.
 
-This project is intentionally built as a retrieval pipeline because a strong document chatbot depends on:
+## Contents
 
-- reliable text extraction from multiple file formats
-- chunking that preserves context for answer generation
-- vector storage for semantic similarity search
-- embeddings from a modern model like Gemini for retrieval quality
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Data and security](#data-and-security)
+- [Development](#development)
+- [Known limitations](#known-limitations)
+- [Project layout](#project-layout)
+- [Contributing](#contributing)
+- [License](#license)
 
-Each design choice is meant to keep the pipeline simple, extensible, and ready for a true chatbot layer.
+## Architecture
 
-## Key design decisions
+```text
+                         +------------------+
+                         |  Text or PDF     |
+                         +--------+---------+
+                                  |
+                                  v
+                         +------------------+
+                         | Extract and      |
+                         | split into chunks|
+                         +--------+---------+
+                                  |
+                    +-------------+-------------+
+                    |                           |
+                    v                           v
+          +-------------------+        +------------------+
+          | Firestore chunk   |        | Gemini embedding |
+          | metadata          |        | batch job        |
+          +---------+---------+        +--------+---------+
+                    |                           |
+                    +-------------+-------------+
+                                  v
+                         +------------------+
+                         | Firestore vector|
+                         | search           |
+                         +--------+---------+
+                                  |
+                                  v
+                         +------------------+
+                         | Gemini response  |
+                         +------------------+
+```
 
-### Why `firebase-admin`
-
-`firebase-admin` is used for Firestore access because Firestore is already available in this project and it provides a managed vector-capable document store. Firestore allows chunk metadata and embeddings to live together, which is useful for future retrieval and prompt construction.
-
-### Why `google-genai`
-
-`google-genai` is used to connect to Gemini, which provides both embedding creation and later conversational capabilities. Using the same GenAI client library keeps the integration consistent and makes it easy to evolve this pipeline into a chatbot that can also call Gemini for response generation.
-
-### Why `langchain-text-splitters`
-
-`langchain-text-splitters` is used to split documents into chunks with a token-aware length function. This library is stable, widely adopted, and designed to work well with modern LLM embeddings and retrieval systems.
-
-### Why token-aware chunking
-
-The splitter uses a custom `estimate_gemini_tokens` function to measure text length in units that are closer to Gemini tokenization. This helps avoid huge chunks that exceed model limits and avoids too many tiny fragments that lose context.
-
-### Why 700 token chunk size and 140 token overlap
-
-- `EMBEDDING_CHUNK_SIZE=700` balances context and vector quality. It is large enough to preserve meaningful document passages while staying within typical embedding model limits.
-- `EMBEDDING_OVERLAP_SIZE=140` ensures adjacent chunks share context. Overlap is important in document chatbots because it reduces the chance that a relevant answer is split across two chunks and improves retrieval recall.
-
-These values are configurable through environment variables so the pipeline can be tuned later.
+The ingestion pipeline uses token-aware recursive chunking. It stores chunk
+metadata first, creates a Gemini batch embedding job, and then updates the
+Firestore documents with vectors and token counts. The chat workflow embeds a
+query, retrieves the nearest vectors, and supplies their text to Gemini as
+context.
 
 ## Requirements
 
-- Python 3.11+
-- Firebase service account JSON key
-- Google Gemini API key
+- Python 3.11 or newer
+- A Firebase project with Firestore enabled
+- A Firestore vector index for the configured embedding field
+- A Google Gemini API key and access to the configured models
+- [`uv`](https://docs.astral.sh/uv/) or another Python package installer
 
-## Install
+## Installation
+
+Clone the repository and install the locked dependencies:
+
+```bash
+uv sync
+```
+
+Alternatively, install the package with pip:
 
 ```bash
 python -m pip install .
 ```
 
-For development dependencies:
+Install development dependencies with:
 
 ```bash
-python -m pip install .[dev]
+uv sync --group dev
 ```
 
-## Environment
+## Configuration
 
-Create a `.env` file at the repository root with the following variables:
+Copy the example file and replace its placeholders:
 
-```env
-GEMINI_API_KEY=your_genai_api_key
-FIREBASE_CREDENTIALS_PATH=/secure/path/service-account.json
-FIRESTORE_COLLECTION_NAME=your_collection_name
-LANGUAGE_MODEL=gemini-3.5-flash
-EMBEDDING_MODEL=gemini-embedding-2
-EMBEDDING_CHUNK_SIZE=700
-EMBEDDING_OVERLAP_SIZE=140
-OUTPUT_DIMENSIONALITY=768
-JSON_REQUESTS_FILE_NAME=chunks.jsonl
+```bash
+cp .env.example .env
 ```
 
-For local development, `FIREBASE_CREDENTIALS_PATH` may point to a service-account
-JSON file. In production, prefer Application Default Credentials or a
-secret-manager-mounted file. Do not commit either the JSON key or `.env`.
+The application loads `.env` for local development. In production, inject
+these values through the deployment environment or a secret manager.
 
-Configuration is validated at startup. Chunk overlap must be smaller than chunk
-size, and numeric settings must be positive.
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `GEMINI_API_KEY` | Yes | None | Gemini API credential. |
+| `FIRESTORE_COLLECTION_NAME` | Yes | None | Collection queried by the chat workflow. |
+| `FIREBASE_CREDENTIALS_PATH` | No | Application Default Credentials | Path to a Firebase service-account JSON file. |
+| `LANGUAGE_MODEL` | No | `gemini-3.5-flash` | Gemini generation model. |
+| `EMBEDDING_MODEL` | No | `gemini-embedding-2` | Gemini embedding model. |
+| `EMBEDDING_CHUNK_SIZE` | No | `700` | Target chunk length in estimated tokens. |
+| `EMBEDDING_OVERLAP_SIZE` | No | `140` | Overlap between adjacent chunks. Must be smaller than chunk size. |
+| `OUTPUT_DIMENSIONALITY` | No | `768` | Embedding vector dimension. Must match the Firestore vector index. |
+| `JSON_REQUESTS_FILE_NAME` | No | `chunks.jsonl` | Local JSONL file used for the embedding batch request. |
 
-The legacy local service-account filename is:
+Configuration is validated at startup. Numeric values must be positive, and
+the overlap must be smaller than the chunk size.
 
-```text
-agent_iq_firebase_admin_private_key.json
-```
+### Firebase credentials
+
+For local development, set `FIREBASE_CREDENTIALS_PATH` to a service-account
+JSON file. For deployed workloads, prefer Application Default Credentials or a
+secret-manager-mounted file. Never commit `.env`, service-account JSON files,
+or API keys.
 
 ## Usage
 
-Run the ingestion and embedding pipeline from `agent_iq/embeddings/ingest.py`:
+### Ingest a document
+
+Run the ingestion command from the repository root:
 
 ```bash
-python -m agent_iq.embeddings.ingest
+uv run python -m agent_iq.embeddings.ingest
 ```
 
-The script will prompt for a file path and then:
+When prompted, provide a path to a `.txt` or `.pdf` file. The pipeline will:
 
-1. read text or extract text from a PDF
-2. split the content into overlapping chunks
-3. write chunk metadata to Firestore
-4. generate a JSONL upload file for Gemini batch embeddings
-5. create a Gemini batch embedding job
-6. download embeddings and attach them to Firestore documents
+1. extract the document text;
+2. split it into overlapping chunks;
+3. write chunk metadata to a Firestore collection derived from the filename;
+4. upload a JSONL embedding request to Gemini;
+5. create and poll a Gemini batch embedding job;
+6. attach the returned vectors and token counts to the Firestore documents.
 
-## Future chatbot evolution
+### Start the chat workflow
 
-This repo is structured so the next steps are natural:
+Set `FIRESTORE_COLLECTION_NAME` to the collection you want to query, then run:
 
-- add a retrieval layer that queries Firestore by vector similarity
-- add a prompt construction layer that combines matching chunks into a user query context
-- call Gemini for answer generation using the retrieved context
-- add conversation state and follow-up question handling
+```bash
+uv run python main.py
+```
 
-## Architecture diagram
+Type `exit` to end the session.
 
-![User and data flow](assets/user_data_flow.svg)
+## Data and security
 
-## Project structure
+Document text is sent to Google Gemini for embedding and response generation.
+Confirm that this processing complies with your organization's privacy,
+retention, residency, and regulatory requirements.
 
-- `main.py` — starter entry point
-- `agent_iq/connections/firebase.py` — Firebase app initialization
-- `agent_iq/connections/genai.py` — Gemini client initialization
-- `agent_iq/embeddings/splitter.py` — chunking rules and token estimation
-- `agent_iq/embeddings/chunking.py` — file reading and chunk preparation
-- `agent_iq/embeddings/embed.py` — Firestore persistence and Gemini batch embedding flow
+Before any production deployment:
 
-## Notes
+- rotate credentials that may have been exposed during development;
+- use a secret manager and least-privilege Firebase permissions;
+- configure Gemini and Firebase quotas, budgets, and monitoring;
+- add authentication, authorization, tenant isolation, and rate limiting for
+  any network-facing interface;
+- bound query size, retrieved context, conversation history, and model spend;
+- add secret scanning and dependency vulnerability scanning to CI.
 
-- Firestore collection names are derived from the source file name.
-- Embeddings are stored using `google.cloud.firestore_v1.vector.Vector`.
-- The current implementation focuses on ingestion and vector preparation; retrieval and response generation are the next phase.
+To report a security issue, do not open a public issue containing credentials
+or sensitive document content. Contact the repository maintainers through the
+private security channel established for your organization.
+
+## Development
+
+Run the available static checks:
+
+```bash
+uv run ruff check agent_iq main.py
+uv run python -m compileall -q agent_iq main.py
+```
+
+Before submitting changes, also verify that:
+
+- no secrets or generated JSONL files are tracked;
+- document extraction works for representative text and PDF files;
+- the Firestore vector index dimension matches `OUTPUT_DIMENSIONALITY`;
+- failures from Gemini and Firestore do not leave unrecoverable partial data;
+- changes are tested in an isolated project or with deterministic mocks.
+
+## Known limitations
+
+- The chat interface is terminal-only.
+- There is no HTTP API, user authentication, or multi-tenant authorization.
+- Ingestion writes metadata before embedding completion; failed jobs may leave
+  documents without vectors.
+- Ingestion uses shared local JSONL filenames, so concurrent runs can conflict.
+- Batch polling has no configured timeout or cancellation workflow.
+- Embedding result parsing assumes every returned row is valid.
+- Retrieved context and conversation history are not yet bounded by a token
+  budget.
+- There is no automated test suite or CI pipeline in the repository.
+
+## Project layout
+
+```text
+agent_iq/
+├── config.py                    # Environment loading and validation
+├── connections/
+│   ├── firebase.py              # Firebase initialization
+│   └── genai.py                 # Gemini client initialization
+└── embeddings/
+    ├── chunking.py              # Text and PDF extraction
+    ├── embed.py                 # Embeddings and vector retrieval
+    ├── ingest.py                # Ingestion orchestration
+    └── splitter.py              # Token-aware chunking
+main.py                          # Terminal RAG chat workflow
+pyproject.toml                   # Package metadata and dependencies
+uv.lock                          # Locked dependency resolution
+```
+
+## Contributing
+
+1. Create a focused branch for your change.
+2. Keep credentials, private documents, and generated files out of Git.
+3. Run Ruff and compilation checks locally.
+4. Add or update tests for behavior changes.
+5. Describe configuration, migration, and security implications in the pull
+   request.
 
 ## License
 
-This project is provided as-is.
+No license has been specified yet. Treat the repository as all-rights-
+reserved until the maintainers add a license file.
