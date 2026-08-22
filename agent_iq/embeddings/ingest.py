@@ -11,6 +11,7 @@ def main(file_path: str):
     collection_name = process_chunks(chunk_obj=chunk_obj)
     batch_job_name = create_embeddings()
     process_embeddings(batch_job_name=batch_job_name, collection_name=collection_name)
+    return collection_name
 
 
 if __name__ == "__main__":

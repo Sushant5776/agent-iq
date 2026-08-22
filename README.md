@@ -111,6 +111,7 @@ these values through the deployment environment or a secret manager.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | Yes | None | Gemini API credential. |
+| `API_ACCESS_TOKEN` | Yes for API endpoints | None | Bearer token required by `/query` and `/ingest`. |
 | `FIRESTORE_COLLECTION_NAME` | Yes | None | Collection queried by the chat workflow. |
 | `FIREBASE_CREDENTIALS_PATH` | No | Application Default Credentials | Path to a Firebase service-account JSON file. |
 | `LANGUAGE_MODEL` | No | `gemini-3.5-flash` | Gemini generation model. |
@@ -159,6 +160,43 @@ uv run python main.py
 
 Type `exit` to end the session.
 
+### Run the API
+
+Start the FastAPI application with Uvicorn:
+
+```bash
+uv run uvicorn agent_iq.api:app --host 0.0.0.0 --port 8000
+```
+
+The API provides:
+
+| Method | Endpoint | Purpose | Authentication |
+| --- | --- | --- | --- |
+| `GET` | `/health` | Liveness check. | None |
+| `POST` | `/query` | Retrieve context and generate an answer. | Bearer token |
+| `POST` | `/ingest` | Ingest one `.txt` or `.pdf` document. | Bearer token |
+
+Example query:
+
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Authorization: Bearer $API_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is this document about?"}'
+```
+
+Example ingestion:
+
+```bash
+curl -X POST http://localhost:8000/ingest \
+  -H "Authorization: Bearer $API_ACCESS_TOKEN" \
+  -F "file=@document.pdf"
+```
+
+The current `/ingest` endpoint waits for the complete embedding batch job.
+For production workloads, move ingestion to a durable background job queue and
+return a job ID instead of holding the HTTP request open.
+
 ## Data and security
 
 Document text is sent to Google Gemini for embedding and response generation.
@@ -199,7 +237,9 @@ Before submitting changes, also verify that:
 ## Known limitations
 
 - The chat interface is terminal-only.
-- There is no HTTP API, user authentication, or multi-tenant authorization.
+- API authentication currently uses one shared bearer token; there is no user
+  identity or multi-tenant authorization.
+- API ingestion is synchronous and has no durable job queue.
 - Ingestion writes metadata before embedding completion; failed jobs may leave
   documents without vectors.
 - Ingestion uses shared local JSONL filenames, so concurrent runs can conflict.
