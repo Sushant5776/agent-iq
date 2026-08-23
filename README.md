@@ -125,7 +125,7 @@ these values through the deployment environment or a secret manager.
 | `GEMINI_API_KEY` | Yes | None | Gemini API credential. |
 | `API_ACCESS_TOKEN` | Yes for API endpoints | None | Bearer token required by `/query` and `/ingest`. |
 | `FIRESTORE_COLLECTION_NAME` | Yes | None | Collection queried by the chat workflow. |
-| `FIREBASE_CREDENTIALS_PATH` | No | Application Default Credentials | Path to a Firebase service-account JSON file. |
+| `FIREBASE_SERVICE_ACCOUNT_BASE64` | No | Application Default Credentials | Base64-encoded Firebase service-account JSON. |
 | `LANGUAGE_MODEL` | No | `gemini-3.5-flash` | Gemini generation model. |
 | `EMBEDDING_MODEL` | No | `gemini-embedding-2` | Gemini embedding model. |
 | `EMBEDDING_CHUNK_SIZE` | No | `700` | Target chunk length in estimated tokens. |
@@ -138,10 +138,17 @@ the overlap must be smaller than the chunk size.
 
 ### Firebase credentials
 
-For local development, set `FIREBASE_CREDENTIALS_PATH` to a service-account
-JSON file. For deployed workloads, prefer Application Default Credentials or a
-secret-manager-mounted file. Never commit `.env`, service-account JSON files,
-or API keys.
+For local development or Vercel, encode the service-account JSON and store the
+result in `FIREBASE_SERVICE_ACCOUNT_BASE64` as a server-side secret:
+
+```bash
+base64 -i agent_iq_firebase_admin_private_key.json | tr -d '\\n'
+```
+
+For deployed workloads, prefer Application Default Credentials when available.
+Never commit `.env`, service-account JSON files, Base64 credentials, or API
+keys. The application decodes the Base64 value in memory and does not create a
+credential file.
 
 ## Usage
 
