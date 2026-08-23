@@ -20,3 +20,6 @@ dev = [
     "faker>=40.36.0",
     "ruff>=0.16.1",
 ]
+
+[tool.vercel]
+entrypoint = "agent_iq.api:app"
