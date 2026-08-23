@@ -8,8 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
-*.json*
+*.jsonl*
 *.env*
 !.env.example
 *temp*
 *.DS_Store*
+agent_iq_firebase_admin_private_key.json
