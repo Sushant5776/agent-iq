@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 
 from agent_iq.config import Settings
 from agent_iq.connections.genai import GenAI
-from agent_iq.embeddings.embed import retrieve_top_embeddings
+from agent_iq.embeddings.embed import list_collection_names, retrieve_top_embeddings
+from agent_iq.embeddings.ingest import main as ingest_document
 
 
 class QueryRequest(BaseModel):
@@ -89,6 +90,11 @@ def _query(request: QueryRequest, settings: Settings) -> QueryResponse:
 app = FastAPI(title="AgentIQ API", version="0.1.0")
 
 
+@app.get("/")
+def home() -> dict[str, str]:
+    return {"message": "Welcome to the AgentIQ API!"}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -96,8 +102,6 @@ def health() -> dict[str, str]:
 
 @app.get("/collections", dependencies=[Depends(require_api_token)])
 async def collections() -> dict[str, list[str]]:
-    from agent_iq.embeddings.embed import list_collection_names
-
     return {"collections": await run_in_threadpool(list_collection_names)}
 
 
@@ -133,8 +137,6 @@ async def ingest(file: Annotated[UploadFile, File()]) -> dict[str, str]:
                         status_code=413, detail="File exceeds 20 MiB limit"
                     )
                 output.write(chunk)
-
-        from agent_iq.embeddings.ingest import main as ingest_document
 
         collection_name = await run_in_threadpool(ingest_document, str(file_path))
 

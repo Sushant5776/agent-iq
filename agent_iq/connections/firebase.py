@@ -22,7 +22,11 @@ class Firebase:
                                 validate=True,
                             ).decode("utf-8")
                         )
-                    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                    except (
+                        ValueError,
+                        UnicodeDecodeError,
+                        json.JSONDecodeError,
+                    ) as error:
                         raise ValueError(
                             "FIREBASE_SERVICE_ACCOUNT_BASE64 must contain valid "
                             "Base64-encoded service-account JSON"
