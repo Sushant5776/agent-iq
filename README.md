@@ -75,7 +75,7 @@ context.
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.12 or newer
 - A Firebase project with Firestore enabled
 - A Firestore vector index for the configured embedding field
 - A Google Gemini API key and access to the configured models
