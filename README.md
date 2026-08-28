@@ -16,8 +16,8 @@ The repository currently provides three operator-facing workflows:
 
 > **Project status:** early-stage foundation. It is suitable for local
 > development and controlled evaluation. It is not yet a hardened public
-> service: authentication, authorization, job orchestration, observability,
-> and automated tests still need to be added before internet-facing use.
+> service: end-user authentication, authorization, durable job orchestration,
+> and observability still need to be added before internet-facing use.
 
 ## Contents
 
@@ -46,19 +46,22 @@ The repository currently provides three operator-facing workflows:
                          | split into chunks|
                          +--------+---------+
                                   |
-                    +-------------+-------------+
-                    |                           |
-                    v                           v
-          +-------------------+        +------------------+
-          | Firestore chunk   |        | Gemini embedding |
-          | metadata          |        | batch job        |
-          +---------+---------+        +--------+---------+
-                    |                           |
-                    +-------------+-------------+
                                   v
                          +------------------+
-                         | Firestore vector|
-                         | search           |
+                         | Gemini embedding |
+                         | batch job        |
+                         +--------+---------+
+                                  |
+                                  v
+                         +------------------+
+                         | Validate complete|
+                         | batch result     |
+                         +--------+---------+
+                                  |
+                                  v
+                         +------------------+
+                         | Firestore vector |
+                         | documents/search |
                          +--------+---------+
                                   |
                                   v
@@ -67,11 +70,11 @@ The repository currently provides three operator-facing workflows:
                          +------------------+
 ```
 
-The ingestion pipeline uses token-aware recursive chunking. It stores chunk
-metadata first, creates a Gemini batch embedding job, and then updates the
-Firestore documents with vectors and token counts. The chat workflow embeds a
-query, retrieves the nearest vectors, and supplies their text to Gemini as
-context.
+The ingestion pipeline uses token-aware recursive chunking. Each request writes
+its Gemini batch manifest only inside an isolated temporary directory, downloads
+the result into memory, validates the complete result, and then writes fully
+embedded documents to Firestore. The chat workflow embeds a query, retrieves
+the nearest vectors, and supplies their text to Gemini as context.
 
 ## Requirements
 
@@ -131,7 +134,8 @@ these values through the deployment environment or a secret manager.
 | `EMBEDDING_CHUNK_SIZE` | No | `700` | Target chunk length in estimated tokens. |
 | `EMBEDDING_OVERLAP_SIZE` | No | `140` | Overlap between adjacent chunks. Must be smaller than chunk size. |
 | `OUTPUT_DIMENSIONALITY` | No | `512` | Embedding vector dimension. Must match the Firestore vector index. |
-| `JSON_REQUESTS_FILE_NAME` | No | `chunks.jsonl` | Local JSONL file used for the embedding batch request. |
+| `EMBEDDING_BATCH_TIMEOUT_SECONDS` | No | `240` | Maximum time one synchronous request waits for Gemini. |
+| `EMBEDDING_BATCH_POLL_SECONDS` | No | `5` | Delay between Gemini batch status checks. |
 
 Configuration is validated at startup. Numeric values must be positive, and
 the overlap must be smaller than the chunk size.
@@ -164,10 +168,10 @@ When prompted, provide a path to a `.txt` or `.pdf` file. The pipeline will:
 
 1. extract the document text;
 2. split it into overlapping chunks;
-3. write chunk metadata to a Firestore collection derived from the filename;
-4. upload a JSONL embedding request to Gemini;
-5. create and poll a Gemini batch embedding job;
-6. attach the returned vectors and token counts to the Firestore documents.
+3. create a request-scoped JSONL manifest in a temporary directory;
+4. upload the manifest and poll a Gemini batch embedding job;
+5. validate the downloaded result in memory;
+6. write complete chunks, vectors, and token counts to Firestore.
 
 ### Start the terminal chat workflow
 
@@ -214,8 +218,10 @@ curl -X POST http://localhost:8000/ingest \
 ```
 
 The current `/ingest` endpoint waits for the complete embedding batch job.
-For production workloads, move ingestion to a durable background job queue and
-return a job ID instead of holding the HTTP request open.
+Uploads through the Next.js/Vercel proxy are limited to 4 MiB so the multipart
+request remains below Vercel's request-body limit. The configured embedding
+timeout keeps polling bounded, but the page must remain open until ingestion
+finishes.
 
 ### Run the web frontend
 
@@ -266,6 +272,7 @@ Run the available static checks:
 ```bash
 uv run ruff check agent_iq main.py
 uv run python -m compileall -q agent_iq main.py
+uv run python -m unittest discover -s tests
 ```
 
 Run the frontend checks from `web/`:
@@ -290,14 +297,12 @@ Before submitting changes, also verify that:
 - The web workspace currently uses one shared bearer token; there is no user
   identity or multi-tenant authorization.
 - API ingestion is synchronous and has no durable job queue.
-- Ingestion writes metadata before embedding completion; failed jobs may leave
-  documents without vectors.
-- Ingestion uses shared local JSONL filenames, so concurrent runs can conflict.
-- Batch polling has no configured timeout or cancellation workflow.
-- Embedding result parsing assumes every returned row is valid.
+- Files proxied through Vercel are limited to 4 MiB.
+- Closing the page or a platform timeout can interrupt synchronous ingestion;
+  use smaller documents and keep the page open.
 - Retrieved context and conversation history are not yet bounded by a token
   budget.
-- There is no automated test suite or CI pipeline in the repository.
+- There is no CI pipeline in the repository.
 
 ## Project layout
 

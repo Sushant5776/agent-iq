@@ -1,18 +1,39 @@
 import hmac
+import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from google.genai.types import GenerateContentConfig, Part, UserContent
 from pydantic import BaseModel, Field
+from pypdf.errors import PdfReadError
 
 from agent_iq.config import Settings
 from agent_iq.connections.genai import GenAI
+from agent_iq.embeddings.chunking import InvalidDocumentError
 from agent_iq.embeddings.embed import list_collection_names, retrieve_top_embeddings
 from agent_iq.embeddings.ingest import main as ingest_document
+
+logger = logging.getLogger(__name__)
+
+MAX_PROXIED_UPLOAD_BYTES = 4 * 1024 * 1024
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 class QueryRequest(BaseModel):
@@ -104,6 +125,86 @@ def _query(request: QueryRequest, settings: Settings) -> QueryResponse:
 app = FastAPI(title="AgentIQ API", version="0.1.0")
 
 
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", str(uuid4()))
+
+
+def _error_response(
+    request: Request,
+    *,
+    status_code: int,
+    code: str,
+    detail: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    request_id = _request_id(request)
+    response_headers = dict(headers or {})
+    response_headers["X-Request-ID"] = request_id
+    return JSONResponse(
+        status_code=status_code,
+        content={"code": code, "detail": detail, "request_id": request_id},
+        headers=response_headers,
+    )
+
+
+@app.middleware("http")
+async def attach_request_id(request: Request, call_next):
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request.state.request_id = (
+        supplied_request_id
+        if _REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
+        else str(uuid4())
+    )
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def handle_http_exception(request: Request, error: HTTPException):
+    detail = error.detail if isinstance(error.detail, str) else "Request failed"
+    return _error_response(
+        request,
+        status_code=error.status_code,
+        code=f"http_{error.status_code}",
+        detail=detail,
+        headers=error.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_exception(request: Request, error: RequestValidationError):
+    logger.info("Request validation failed: %s", error.errors())
+    return _error_response(
+        request,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code="validation_error",
+        detail="The request is invalid",
+    )
+
+
+@app.exception_handler(TimeoutError)
+async def handle_timeout_exception(request: Request, error: TimeoutError):
+    logger.warning("Request %s timed out: %s", _request_id(request), error)
+    return _error_response(
+        request,
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+        code="ingestion_timeout",
+        detail="Ingestion timed out while waiting for embeddings",
+    )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(request: Request, error: Exception):
+    logger.exception("Request %s failed: %s", _request_id(request), error)
+    return _error_response(
+        request,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="internal_error",
+        detail="The server could not complete the request",
+    )
+
+
 @app.get("/")
 def home() -> dict[str, str]:
     return {"message": "Welcome to the AgentIQ API!"}
@@ -146,12 +247,18 @@ async def ingest(file: Annotated[UploadFile, File()]) -> dict[str, str]:
         with file_path.open("wb") as output:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
-                if size > 20 * 1024 * 1024:
+                if size > MAX_PROXIED_UPLOAD_BYTES:
                     raise HTTPException(
-                        status_code=413, detail="File exceeds 20 MiB limit"
+                        status_code=413, detail="File exceeds 4 MiB limit"
                     )
                 output.write(chunk)
 
-        collection_name = await run_in_threadpool(ingest_document, str(file_path))
+        if size == 0:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty")
+
+        try:
+            collection_name = await run_in_threadpool(ingest_document, str(file_path))
+        except (InvalidDocumentError, UnicodeDecodeError, PdfReadError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     return {"status": "completed", "collection_name": collection_name}

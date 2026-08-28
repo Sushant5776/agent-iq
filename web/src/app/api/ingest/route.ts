@@ -1,24 +1,43 @@
-import { NextResponse } from "next/server";
+import {
+  MAX_MULTIPART_BODY_BYTES,
+  proxyAgentIq,
+  proxyError,
+} from "@/lib/api-proxy";
+
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
-  const baseUrl = process.env.AGENTIQ_API_BASE_URL;
-  const token = process.env.AGENTIQ_API_ACCESS_TOKEN;
-  if (!baseUrl || !token) {
-    return NextResponse.json({ detail: "AgentIQ API is not configured" }, { status: 503 });
+  const requestId = crypto.randomUUID();
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (contentLength > MAX_MULTIPART_BODY_BYTES) {
+    return proxyError(
+      413,
+      "upload_too_large",
+      "Upload exceeds the 4 MiB file limit",
+      requestId,
+    );
   }
 
-  try {
-    const response = await fetch(`${baseUrl}/ingest`, {
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_MULTIPART_BODY_BYTES) {
+    return proxyError(
+      413,
+      "upload_too_large",
+      "Upload exceeds the 4 MiB file limit",
+      requestId,
+    );
+  }
+
+  return proxyAgentIq(
+    "/ingest",
+    {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": request.headers.get("content-type") || "application/octet-stream",
+        "Content-Type":
+          request.headers.get("content-type") || "application/octet-stream",
       },
-      body: await request.arrayBuffer(),
-      cache: "no-store",
-    });
-    return NextResponse.json(await response.json(), { status: response.status });
-  } catch {
-    return NextResponse.json({ detail: "AgentIQ API is unavailable" }, { status: 502 });
-  }
+      body,
+    },
+    requestId,
+  );
 }

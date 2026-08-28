@@ -4,8 +4,32 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { requireApiPayload } from "@/lib/http";
+
 type Source = { document_id: string; file_name: string | null; index: number | null };
 type Message = { role: "user" | "assistant"; content: string; sources?: Source[] };
+
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+
+function collectionNames(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function querySources(value: unknown): Source[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const source = item as Record<string, unknown>;
+    if (typeof source.document_id !== "string") return [];
+    return [{
+      document_id: source.document_id,
+      file_name: typeof source.file_name === "string" ? source.file_name : null,
+      index: typeof source.index === "number" ? source.index : null,
+    }];
+  });
+}
 
 const initialMessage: Message = {
   role: "assistant",
@@ -27,10 +51,10 @@ export default function Home() {
     setLoadingCollections(true);
     try {
       const response = await fetch("/api/collections", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "Collections could not be loaded.");
-      setCollections(payload.collections);
-      setSelectedCollection((current) => current || payload.collections[0] || "");
+      const payload = await requireApiPayload(response, "Collections could not be loaded.");
+      const names = collectionNames(payload.collections);
+      setCollections(names);
+      setSelectedCollection((current) => current || names[0] || "");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Collections could not be loaded.");
     } finally { setLoadingCollections(false); }
@@ -40,10 +64,10 @@ export default function Home() {
     const controller = new AbortController();
     fetch("/api/collections", { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || "Collections could not be loaded.");
-        setCollections(payload.collections);
-        setSelectedCollection((current) => current || payload.collections[0] || "");
+        const payload = await requireApiPayload(response, "Collections could not be loaded.");
+        const names = collectionNames(payload.collections);
+        setCollections(names);
+        setSelectedCollection((current) => current || names[0] || "");
       })
       .catch((error) => {
         if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : "Collections could not be loaded.");
@@ -64,9 +88,9 @@ export default function Home() {
     setNotice("");
     try {
       const response = await fetch("/api/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: trimmedQuery, collection_name: selectedCollection }) });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "The query could not be completed.");
-      setMessages((current) => [...current, { role: "assistant", content: payload.answer, sources: payload.sources }]);
+      const payload = await requireApiPayload(response, "The query could not be completed.");
+      if (typeof payload.answer !== "string") throw new Error("The API returned an invalid answer.");
+      setMessages((current) => [...current, { role: "assistant", content: payload.answer as string, sources: querySources(payload.sources) }]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "The query could not be completed.");
     } finally { setBusy(false); }
@@ -76,15 +100,16 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!/\.(pdf|txt)$/i.test(file.name)) { setNotice("Choose a PDF or plain text document."); return; }
-    if (file.size > 20 * 1024 * 1024) { setNotice("Documents must be smaller than 20 MiB."); return; }
+    if (file.size > MAX_UPLOAD_BYTES) { setNotice("Documents must be no larger than 4 MiB."); return; }
     setUploading(true); setNotice("");
     const formData = new FormData(); formData.append("file", file);
     try {
       const response = await fetch("/api/ingest", { method: "POST", body: formData });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "The document could not be indexed.");
+      const payload = await requireApiPayload(response, "The document could not be indexed.");
+      if (typeof payload.collection_name !== "string") throw new Error("The API returned an invalid collection name.");
       setNotice(`${file.name} indexed in ${payload.collection_name}.`);
       await refreshCollections();
+      setSelectedCollection(payload.collection_name);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "The document could not be indexed.");
     } finally { setUploading(false); if (fileRef.current) fileRef.current.value = ""; }
@@ -99,7 +124,7 @@ export default function Home() {
           {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.role}-${index}`}><div className="message-meta">{message.role === "assistant" ? "AGENTIQ" : "YOU"}</div>{message.role === "assistant" ? <div className="answer-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div> : <p>{message.content}</p>}{message.sources && message.sources.length > 0 && <div className="inline-sources">{message.sources.map((source) => <span key={source.document_id}>{source.file_name || "Source"} - chunk {source.index ?? "-"}</span>)}</div>}</article>)}
           {busy && <article className="message assistant"><div className="message-meta">AGENTIQ</div><p className="typing">Searching the knowledge base<span>.</span><span>.</span><span>.</span></p></article>}
         </div><form className="composer" onSubmit={submitQuery}><textarea value={query} onChange={(event) => setQuery(event.target.value)} placeholder={selectedCollection ? `Ask about ${selectedCollection}...` : "Select a book to begin..."} rows={2} disabled={busy || !selectedCollection} /><button type="submit" disabled={busy || !query.trim() || !selectedCollection}>{busy ? "Working" : "Send question"} <span>↗</span></button></form></div>
-        <aside className="side-column"><div className="upload-panel panel"><div className="panel-header"><div><p className="panel-kicker">Knowledge base</p><h3>Add a document</h3></div><span className="plus-mark">+</span></div><p className="panel-copy">Drop a PDF or text file into the index. AgentIQ will split it, embed it, and make it searchable.</p><button className="upload-button" type="button" onClick={() => fileRef.current?.click()} disabled={uploading}>{uploading ? "Indexing document..." : "Choose document"}<span>↑</span></button><input ref={fileRef} type="file" accept=".pdf,.txt" onChange={uploadDocument} hidden /><p className="file-note">PDF or TXT · max 20 MiB</p></div><div className="evidence-panel panel"><div className="panel-header"><div><p className="panel-kicker">How it works</p><h3>Evidence first</h3></div><span className="index-number">02</span></div><ol className="process-list"><li><span>01</span><p><strong>Retrieve</strong> Find the closest passages by meaning.</p></li><li><span>02</span><p><strong>Compose</strong> Ground the response in those passages.</p></li><li><span>03</span><p><strong>Trace</strong> Keep the source trail attached to the answer.</p></li></ol></div></aside>
+        <aside className="side-column"><div className="upload-panel panel"><div className="panel-header"><div><p className="panel-kicker">Knowledge base</p><h3>Add a document</h3></div><span className="plus-mark">+</span></div><p className="panel-copy">Choose a PDF or text file. Keep this page open while AgentIQ splits, embeds, and indexes it.</p><button className="upload-button" type="button" onClick={() => fileRef.current?.click()} disabled={uploading}>{uploading ? "Indexing document..." : "Choose document"}<span>↑</span></button><input ref={fileRef} type="file" accept=".pdf,.txt" onChange={uploadDocument} hidden /><p className="file-note">PDF or TXT · max 4 MiB</p></div><div className="evidence-panel panel"><div className="panel-header"><div><p className="panel-kicker">How it works</p><h3>Evidence first</h3></div><span className="index-number">02</span></div><ol className="process-list"><li><span>01</span><p><strong>Retrieve</strong> Find the closest passages by meaning.</p></li><li><span>02</span><p><strong>Compose</strong> Ground the response in those passages.</p></li><li><span>03</span><p><strong>Trace</strong> Keep the source trail attached to the answer.</p></li></ol></div></aside>
       </section>
       {notice && <div className="notice" role="status">{notice}<button type="button" onClick={() => setNotice("")}>×</button></div>}
       <footer><span>AGENTIQ / PRIVATE RESEARCH DESK</span><span>SECURE OPERATOR MODE</span></footer>

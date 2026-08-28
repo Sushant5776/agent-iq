@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -34,9 +33,10 @@ class Settings:
     firebase_service_account_base64: str | None
     embedding_chunk_size: int
     embedding_overlap_size: int
-    json_requests_file_name: Path
     output_dimensionality: int
     top_k_matching_results: int
+    embedding_batch_timeout_seconds: int
+    embedding_batch_poll_seconds: int
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -57,9 +57,12 @@ class Settings:
             ),
             embedding_chunk_size=chunk_size,
             embedding_overlap_size=overlap_size,
-            json_requests_file_name=Path(
-                os.environ.get("JSON_REQUESTS_FILE_NAME", "chunks.jsonl")
-            ),
             output_dimensionality=_positive_int("OUTPUT_DIMENSIONALITY", 512),
             top_k_matching_results=_positive_int("TOP_K_MATCHING_RESULTS", 10),
+            embedding_batch_timeout_seconds=_positive_int(
+                "EMBEDDING_BATCH_TIMEOUT_SECONDS", 240
+            ),
+            embedding_batch_poll_seconds=_positive_int(
+                "EMBEDDING_BATCH_POLL_SECONDS", 5
+            ),
         )
